@@ -1,0 +1,217 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/inter/800.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  /* Page color lives on <html> so body can stay transparent and reveal
+     the fixed aurora mesh sitting at z-index:-1. */
+  html {
+    @apply bg-bg;
+  }
+  body {
+    @apply text-ink font-sans antialiased;
+    background: transparent;
+    font-feature-settings: "cv02", "cv03", "cv04";
+  }
+  /* The animated aurora background is the <Aurora /> component (4 drifting
+     blobs, per the KoshurLock Aurora design) rendered by App in both views. */
+  :root {
+    --grad-brand: linear-gradient(100deg, #38bdf8 0%, #6366f1 34%, #a855f7 64%, #ec4899 100%);
+    --grad-brand-bright: linear-gradient(100deg, #38bdf8 0%, #6366f1 34%, #a855f7 64%, #ec4899 100%);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #232a52;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2f3768;
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-border bg-[rgba(13,16,34,0.72)];
+  }
+  /* Frosted glass - backdrop-blur is expensive over the cytoscape canvas,
+     so graph overlays MUST use .glass-flat instead. Blur is allowed on the
+     TopBar, Sheet and picker screens only. */
+  .glass {
+    @apply rounded-2xl border border-border bg-[rgba(18,22,44,0.62)] shadow-card backdrop-blur-[14px];
+  }
+  .glass-flat {
+    @apply border border-border bg-[rgba(13,16,34,0.85)];
+  }
+  .mono {
+    @apply font-mono;
+    font-feature-settings: "tnum";
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded border border-border bg-[rgba(30,36,68,0.5)] px-2.5 py-0.5 text-2xs transition-colors;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-accent/35 bg-accent/[0.12] px-3 py-1 text-2xs font-semibold uppercase tracking-[0.08em] text-accent-hi;
+  }
+  .label-caps {
+    @apply text-2xs font-semibold uppercase tracking-[0.12em] text-faint;
+  }
+  /* Full-width gradient at natural size (design .gtext) - the sweep must
+     reach the pink stop within the element's own width. */
+  .gradient-text {
+    background-image: var(--grad-brand-bright);
+    @apply bg-clip-text text-transparent;
+  }
+  .gradient-text-animated {
+    background-size: 200% 200%;
+    animation: gradient-pan 8s ease infinite;
+  }
+  .hover-lift {
+    @apply transition-all duration-300;
+  }
+  .hover-lift:hover {
+    transform: translateY(-2px);
+  }
+  /* Shimmer loading sweep - transform-only, applied via ::after. */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.08) 50%,
+      transparent 70%
+    );
+    animation: shimmer 1.6s linear infinite;
+  }
+  /* Staggered entrance - timings from the KoshurLock Aurora design (.up .d1-.d6). */
+  .stagger-children > * {
+    opacity: 0;
+    transform: translateY(16px);
+    animation: slide-up-fade 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .stagger-children > :nth-child(1) { animation-delay: 50ms; }
+  .stagger-children > :nth-child(2) { animation-delay: 150ms; }
+  .stagger-children > :nth-child(3) { animation-delay: 270ms; }
+  .stagger-children > :nth-child(4) { animation-delay: 400ms; }
+  .stagger-children > :nth-child(5) { animation-delay: 550ms; }
+  .stagger-children > :nth-child(6) { animation-delay: 680ms; }
+  .stagger-children > :nth-child(7) { animation-delay: 800ms; }
+  .stagger-children > :nth-child(8) { animation-delay: 920ms; }
+
+  /* Logo entity-node pulse (design .logopulse) - hero logo only. */
+  .logopulse circle {
+    animation: logo-node-pulse 3.2s ease-in-out infinite;
+  }
+}
+
+/* Plain-CSS keyframes: Tailwind v3 only emits config keyframes when their
+   animate-* utility appears in markup, so keyframes referenced by name from
+   handwritten rules above MUST live here or they never reach the bundle. */
+@keyframes logo-node-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+@keyframes gradient-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+@keyframes led-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+@layer components {
+  /* Status LED: core + soft ring, optional slow pulse for live/ok states */
+  .led {
+    position: relative;
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background: var(--led-core, #6f76a0);
+  }
+  .led::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 9999px;
+    box-shadow: 0 0 0 2px var(--led-ring, transparent);
+  }
+  .led--pulse::after {
+    animation: led-pulse 2.4s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .led--pulse::after,
+  .animate-fade-in,
+  .animate-slide-up-fade,
+  .animate-scale-in,
+  .animate-slide-in-right,
+  .animate-gradient-pan,
+  .animate-mesh-drift,
+  .animate-shimmer,
+  .animate-glow-pulse,
+  .animate-drift-1,
+  .animate-drift-2,
+  .animate-drift-3,
+  .gradient-text-animated,
+  .logopulse circle,
+  .shimmer::after {
+    animation: none !important;
+  }
+  .stagger-children > * {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+  .hover-lift,
+  .hover-lift:hover {
+    transform: none !important;
+  }
+}

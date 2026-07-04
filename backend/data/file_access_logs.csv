@@ -1,0 +1,9 @@
+timestamp,user,action,filename,host,session_id
+2026-06-30T09:20:33,rsharma,VIEW,Q3_Reconciliation.xlsx,FIN-FS-02,VPN-88301
+2026-06-30T10:05:12,rsharma,VIEW,Team_Roster.docx,FIN-FS-01,VPN-88301
+2026-06-30T14:02:58,dkapoor,VIEW,Q4_Customer_Database.xlsx,FIN-FS-02,VPN-88305
+2026-06-30T21:15:40,rsharma,VIEW,Personal_Handover_Notes.docx,FIN-FS-01,VPN-88599
+2026-07-01T02:07:29,rsharma,VIEW,Q4_Customer_Database.xlsx,FIN-FS-02,VPN-88742
+2026-07-01T02:19:04,rsharma,DOWNLOAD,Q4_Customer_Database.xlsx,FIN-FS-02,VPN-88742
+2026-07-01T02:22:47,rsharma,DOWNLOAD,Customer_PII_Export_Full.csv,FIN-FS-02,VPN-88742
+2026-07-01T09:03:11,dkapoor,VIEW,Q3_Reconciliation.xlsx,FIN-FS-02,VPN-88980

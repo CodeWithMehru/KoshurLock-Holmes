@@ -1,0 +1,61 @@
+# Tracepoint - self-hosted stack.
+# The whole app runs with: docker compose up --build
+# Services: postgres (relational + vector + graph via pghybrid), backend (FastAPI
+# + Cognee), frontend (added in stage 6).
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: tracepoint-postgres
+    environment:
+      POSTGRES_USER: cognee
+      POSTGRES_PASSWORD: cognee
+      POSTGRES_DB: cognee_db
+    ports:
+      # Exposed on the host for the stage-2 smoke test and snapshot/restore.
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cognee -d cognee_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: tracepoint-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # All Cognee config (LLM key, Postgres/pgvector/pghybrid) comes from .env.
+    # It is injected as environment variables, NOT copied as a file, so Cognee's
+    # own load_dotenv(override=True) has no .env to clobber the values with.
+    env_file: .env
+    environment:
+      DATA_ROOT_DIRECTORY: /data/cognee_data
+      SYSTEM_ROOT_DIRECTORY: /data/cognee_system
+    volumes:
+      - dataroot:/data            # Cognee raw added-text blobs + case registry/uploads
+      - fastembed_cache:/opt/models
+      # Committed warm snapshot, read-only, for the in-app "reload demo" restore
+      # and cold-start warm boot. (make seed && make snapshot creates it once.)
+      - ./scripts/snapshots:/snapshots:ro
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: tracepoint-frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  dataroot:
+  fastembed_cache:

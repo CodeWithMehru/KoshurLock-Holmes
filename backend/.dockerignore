@@ -1,0 +1,12 @@
+# Never ship secrets or local state into the image. Config arrives via compose
+# environment/env_file, so no .env lands in the container (Cognee's own
+# load_dotenv(override=True) then has nothing to clobber the injected env with).
+.env
+*.env
+.venv/
+.fastembed_cache/
+.cognee_system/
+.cognee_system_smoke/
+__pycache__/
+*.pyc
+scripts/snapshots/

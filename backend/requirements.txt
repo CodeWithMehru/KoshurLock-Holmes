@@ -1,0 +1,18 @@
+# Tracepoint backend.
+# Cognee 1.2.2 with:
+#   groq          - LLM via LiteLLM
+#   fastembed     - local embeddings (all-MiniLM-L6-v2, 384 dim)
+#   postgres-binary - asyncpg + pgvector + psycopg2-binary (no libpq build needed)
+cognee[groq,fastembed,postgres-binary]==1.2.2
+
+# HTTP API
+fastapi
+uvicorn[standard]
+python-dotenv
+python-multipart          # multipart/form-data parsing for evidence upload
+
+# Evidence text extraction for analyst uploads (pure-Python, offline). We extract
+# text ourselves and add it as provenance-wrapped TEXT (keeping citations,
+# timeline, and purge working) rather than using cognee[docs]/unstructured.
+pypdf
+python-docx

@@ -1,0 +1,30 @@
+NORTHGATE FINANCIAL - SECURITY OPERATIONS CENTER (SOC)
+Threat Intelligence & Incident Note / CONFIDENTIAL
+Ref: SOC-2026-0619 | Subject: Credential phishing affecting Finance
+
+Timeline of relevant findings:
+
+2026-06-19  A targeted phishing email was delivered to several Finance staff,
+            spoofing the internal IT Service Desk ("Action required: password
+            re-validation"). The landing page was a pixel-perfect clone of the
+            Northgate SSO login.
+
+2026-06-19  User rsharma (Rahul Sharma) entered corporate credentials into the
+            cloned page at 14:22. Endpoint telemetry confirms the POST to the
+            attacker-controlled host. Credentials (username + password) were
+            harvested. Rahul Sharma was NOT aware the page was fraudulent.
+
+2026-06-20  Password reset was recommended to the user but the ticket stalled;
+            multi-factor was NOT enforced on the legacy VPN gateway at the time.
+
+Threat-intel enrichment:
+  - The phishing kit exfiltrated harvested credentials to command-and-control
+    infrastructure previously attributed to an external threat actor.
+  - Associated indicator of compromise (IOC): source IP 41.220.13.7
+    (geolocated abroad, "Lagos, NG" egress; part of a known credential-abuse
+    cluster). This IP has been used to replay stolen corporate logins.
+
+Analyst note: any successful login for rsharma originating from 41.220.13.7
+should be treated as ACCOUNT TAKEOVER by the external actor, not as legitimate
+activity by the employee. The stolen credentials remained valid because the
+account password had not yet been rotated.

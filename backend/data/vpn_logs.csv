@@ -1,0 +1,10 @@
+timestamp,user,source_ip,location,status,session_id
+2026-06-30T09:02:11,rsharma,10.20.3.14,"Northgate HQ - Floor 3 (internal)",SUCCESS,VPN-88301
+2026-06-30T09:14:52,dkapoor,10.20.3.22,"Northgate HQ - Floor 3 (internal)",SUCCESS,VPN-88305
+2026-06-30T13:41:03,rsharma,103.211.54.9,"Bengaluru, IN (residential)",SUCCESS,VPN-88422
+2026-06-30T18:20:47,mgomez,10.20.2.7,"Northgate HQ - Floor 2 (internal)",SUCCESS,VPN-88510
+2026-06-30T21:07:19,rsharma,103.211.54.9,"Bengaluru, IN (residential)",SUCCESS,VPN-88599
+2026-07-01T01:58:44,rsharma,41.220.13.7,"Lagos, NG (UNRECOGNIZED / foreign)",FAILED,-
+2026-07-01T02:03:12,rsharma,41.220.13.7,"Lagos, NG (UNRECOGNIZED / foreign)",SUCCESS,VPN-88742
+2026-07-01T02:41:55,rsharma,41.220.13.7,"Lagos, NG (UNRECOGNIZED / foreign)",LOGOUT,VPN-88742
+2026-07-01T08:11:02,dkapoor,10.20.3.22,"Northgate HQ - Floor 3 (internal)",SUCCESS,VPN-88980
