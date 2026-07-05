@@ -31,6 +31,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -53,13 +54,58 @@ log = logging.getLogger("tracepoint.engine")
 # Hard per-file ceiling on add+cognify (including retry backoff) so one file
 # stuck behind an exhausted Groq quota cannot hang the whole ingest queue.
 try:
-    INGEST_FILE_TIMEOUT_S = float(os.environ.get("INGEST_FILE_TIMEOUT_S", "180"))
+    INGEST_FILE_TIMEOUT_S = float(os.environ.get("INGEST_FILE_TIMEOUT_S", "360"))
 except ValueError:
-    INGEST_FILE_TIMEOUT_S = 180.0
+    INGEST_FILE_TIMEOUT_S = 360.0
 
 # Substrings marking a Groq free-tier rate limit; shared by the retry loop and
 # the per-file error messages shown in the upload UI.
 _RATE_LIMIT_MARKERS = ("rate limit", "ratelimit", "429", "too many requests")
+
+# Each visible rate-limit wait is capped here; the file retries until it
+# completes (or the ingest is cancelled), so the cap only bounds one nap.
+_RATE_LIMIT_WAIT_CAP_S = 120.0
+
+# Groq/litellm embed the retry hint in the message, e.g. "Please try again in
+# 7.66s" or "in 2m59.559s"; some providers say "Retry-After: 30".
+_RETRY_AFTER_RE = re.compile(
+    r"try again in\s+(?:(\d+)\s*m)?(\d+(?:\.\d+)?)\s*s", re.IGNORECASE
+)
+_RETRY_AFTER_HDR_RE = re.compile(r"retry[- ]after[:\s]+(\d+(?:\.\d+)?)", re.IGNORECASE)
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    """True for provider rate limits (litellm RateLimitError / Groq 429s)."""
+    if "ratelimit" in type(exc).__name__.lower():
+        return True
+    return any(k in str(exc).lower() for k in _RATE_LIMIT_MARKERS)
+
+
+# NOTE on the timeout default: cognee's LLM layer retries 429s internally with
+# a tenacity policy that only gives up after >= 2 attempts AND >= 240s elapsed
+# (cognee/infrastructure/llm/retry_config.py, not configurable). The per-file
+# timeout MUST stay above that floor (~255s observed) or a rate-limited file
+# is cut off mid-backoff and mis-classified as a hard timeout - the
+# InstructorRetryException that finally surfaces carries the RateLimitError
+# text that _is_rate_limit() matches.
+
+
+def _retry_after_s(exc: Exception, attempt: int) -> float:
+    """Seconds to wait before retrying a rate-limited call: the provider's own
+    hint when the message carries one, else an escalating default. Clamped to
+    [2, _RATE_LIMIT_WAIT_CAP_S]."""
+    msg = str(exc)
+    wait: Optional[float] = None
+    m = _RETRY_AFTER_RE.search(msg)
+    if m:
+        wait = (int(m.group(1) or 0)) * 60 + float(m.group(2))
+    else:
+        h = _RETRY_AFTER_HDR_RE.search(msg)
+        if h:
+            wait = float(h.group(1))
+    if wait is None:
+        wait = 15.0 * (2 ** max(0, attempt - 1))  # 15, 30, 60, 120, 120...
+    return max(2.0, min(wait, _RATE_LIMIT_WAIT_CAP_S))
 
 
 # --------------------------------------------------------------------------- #
@@ -130,10 +176,17 @@ def _accepts(fn: Callable, name: str) -> bool:
         return False
 
 
-async def _with_retry(make_coro: Callable[[], Any], tries: int = 5, base: float = 2.0):
+async def _with_retry(
+    make_coro: Callable[[], Any],
+    tries: int = 5,
+    base: float = 2.0,
+    raise_rate_limit: bool = False,
+):
     """Await ``make_coro()`` with retry on two transient classes:
 
-    * Groq free-tier rate limits -> exponential backoff.
+    * Groq free-tier rate limits -> exponential backoff (or, with
+      ``raise_rate_limit=True``, surface immediately so the caller can show a
+      visible waiting state instead of burning its timeout budget here).
     * Postgres write contention during concurrent graph builds
       (``DeadlockDetectedError`` / serialization failures) -> short backoff; the
       transaction rolls back and the call re-runs instead of failing the file.
@@ -148,6 +201,8 @@ async def _with_retry(make_coro: Callable[[], Any], tries: int = 5, base: float 
             msg = str(exc).lower()
             ename = type(exc).__name__.lower()
             if any(k in msg for k in _RATE_LIMIT_MARKERS):
+                if raise_rate_limit:
+                    raise
                 await asyncio.sleep(base * (2 ** attempt))
                 continue
             if (
@@ -355,32 +410,76 @@ async def materialize_case(case_id: str) -> dict:
             path = cases.evidence_path(case, name)
             cases.set_file_status(case_id, name, cases.STATUS_PROCESSING)
 
+            # raise_rate_limit=True: rate limits surface immediately instead of
+            # burning the wait_for budget inside _with_retry's backoff - the
+            # visible waiting loop below owns ALL rate-limit waiting, outside
+            # the per-file timeout. Deadlock retries still happen inside.
             async def _ingest_one(p: Path = path) -> None:
                 doc = ingest.read_evidence_file(p)
                 await _with_retry(
                     lambda d=doc, ds=dataset: cognee.add(
                         d.text, dataset_name=ds, node_set=[d.filename]
-                    )
+                    ),
+                    raise_rate_limit=True,
                 )
-                await _with_retry(lambda ds=dataset: _cognify([ds]))
+                await _with_retry(
+                    lambda ds=dataset: _cognify([ds]), raise_rate_limit=True
+                )
 
-            try:
-                # Hard ceiling per file so an exhausted quota (retry backoff can
-                # burn minutes) fails THIS file and the queue moves on.
-                await asyncio.wait_for(_ingest_one(), timeout=INGEST_FILE_TIMEOUT_S)
-                cases.set_file_status(case_id, name, cases.STATUS_IN_GRAPH)
-                added.append(name)
-            except TimeoutError:
-                cases.set_file_status(
-                    case_id, name, cases.STATUS_FAILED,
-                    f"ingest timed out after {int(INGEST_FILE_TIMEOUT_S)}s "
-                    "(LLM rate limit or slow provider) - run ingest again to retry",
+            # Retry the SAME file through rate limits (visible "waiting" status,
+            # queue paused behind it); real errors fail it and move on.
+            rl_attempt = 0
+            while True:
+                if case_id in _cancel_requested:
+                    break  # cancel already flipped this file via fail_queued
+                rl_hint: Optional[str] = None
+                try:
+                    # Hard ceiling per attempt so genuinely stuck work fails
+                    # this file and the queue moves on. Kept above cognee's
+                    # internal 240s retry floor - see note near the constant.
+                    await asyncio.wait_for(
+                        _ingest_one(), timeout=INGEST_FILE_TIMEOUT_S
+                    )
+                    cases.set_file_status(case_id, name, cases.STATUS_IN_GRAPH)
+                    added.append(name)
+                    break
+                except TimeoutError:
+                    cases.set_file_status(
+                        case_id, name, cases.STATUS_FAILED,
+                        f"ingest timed out after {int(INGEST_FILE_TIMEOUT_S)}s "
+                        "(stuck or very slow provider) - run ingest again to retry",
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    if _is_rate_limit(exc):
+                        rl_hint = str(exc)
+                    else:
+                        cases.set_file_status(
+                            case_id, name, cases.STATUS_FAILED, str(exc)
+                        )
+                        break
+
+                # Rate limited: wait visibly (cancellable), then retry this file.
+                rl_attempt += 1
+                wait = _retry_after_s(Exception(rl_hint or ""), rl_attempt)
+                log.info(
+                    "rate limited on %s (attempt %d); waiting %.0fs",
+                    name, rl_attempt, wait,
                 )
-            except Exception as exc:  # noqa: BLE001
-                msg = str(exc)
-                if any(k in msg.lower() for k in _RATE_LIMIT_MARKERS):
-                    msg = f"LLM rate limit - retry later ({msg[:100]})"
-                cases.set_file_status(case_id, name, cases.STATUS_FAILED, msg)
+                cases.set_file_status(
+                    case_id, name, cases.STATUS_RATE_LIMITED,
+                    f"waiting - rate limited (retry in {int(wait)}s, "
+                    f"attempt {rl_attempt})",
+                )
+                # 1s slices so Cancel interrupts the wait immediately.
+                for _ in range(int(wait)):
+                    if case_id in _cancel_requested:
+                        break
+                    await asyncio.sleep(1)
+                if case_id in _cancel_requested:
+                    break  # file already flipped by fail_queued
+                cases.set_file_status(case_id, name, cases.STATUS_PROCESSING)
+                # loop continues: same file, fresh timeout budget
 
         counts = await _graph_counts()
 

@@ -77,7 +77,7 @@ export interface EvidenceResp {
   line: string | null;
 }
 
-export type FileStatus = "queued" | "processing" | "in_graph" | "failed";
+export type FileStatus = "queued" | "processing" | "rate_limited" | "in_graph" | "failed";
 
 export interface CaseFile {
   filename: string;

@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   Circle,
+  Clock,
   Play,
   ArrowRight,
 } from "lucide-react";
@@ -43,6 +44,11 @@ function StatusPill({ file }: { file: CaseFile }) {
       cls: "shimmer border-info/40 text-info",
       label: "processing",
       icon: <Loader2 className="h-3 w-3 animate-spin" />,
+    },
+    rate_limited: {
+      cls: "shimmer border-warn/40 bg-warn/[0.07] text-warn",
+      label: "waiting - rate limited",
+      icon: <Clock className="h-3 w-3" />,
     },
     in_graph: {
       cls: "border-ok/40 bg-ok/[0.07] text-ok",
@@ -142,7 +148,12 @@ export function EvidenceUpload({
     queryFn: () => api.caseFiles(caseId),
     refetchInterval: (q) => {
       const files = q.state.data?.files ?? [];
-      return files.some((f) => f.status === "processing" || f.status === "queued")
+      return files.some(
+        (f) =>
+          f.status === "processing" ||
+          f.status === "queued" ||
+          f.status === "rate_limited"
+      )
         ? 1500
         : false;
     },
@@ -150,7 +161,10 @@ export function EvidenceUpload({
 
   const files = filesQ.data?.files ?? [];
   const materialized = filesQ.data?.materialized ?? false;
-  const anyProcessing = files.some((f) => f.status === "processing");
+  // rate_limited counts as "ingest running": the queue is paused, not idle.
+  const anyProcessing = files.some(
+    (f) => f.status === "processing" || f.status === "rate_limited"
+  );
   const anyPending = files.some((f) => f.status === "queued" || f.status === "failed");
   const allInGraph = files.length > 0 && files.every((f) => f.status === "in_graph");
 

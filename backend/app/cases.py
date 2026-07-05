@@ -32,6 +32,7 @@ DEMO_ID = "demo"
 # Per-file ingest lifecycle used by the upload UI.
 STATUS_QUEUED = "queued"
 STATUS_PROCESSING = "processing"
+STATUS_RATE_LIMITED = "rate_limited"  # waiting out a temporary LLM rate limit
 STATUS_IN_GRAPH = "in_graph"
 STATUS_FAILED = "failed"
 
@@ -280,9 +281,10 @@ def set_file_status(case_id: str, filename: str, status: str, error: str | None 
 
 
 def fail_queued(case_id: str, message: str) -> int:
-    """Flip every QUEUED file of a case to FAILED with ``message``. Returns how
-    many were flipped. Used by cancel: queued work is visibly abandoned, and a
-    later ingest picks FAILED files back up automatically."""
+    """Flip every QUEUED or RATE_LIMITED file of a case to FAILED with
+    ``message``. Returns how many were flipped. Used by cancel: queued and
+    rate-limit-waiting work is visibly abandoned, and a later ingest picks
+    FAILED files back up automatically."""
     with _lock:
         reg = _load()
         case = reg["cases"].get(case_id)
@@ -290,7 +292,7 @@ def fail_queued(case_id: str, message: str) -> int:
             return 0
         n = 0
         for f in case["files"]:
-            if f.get("status") == STATUS_QUEUED:
+            if f.get("status") in (STATUS_QUEUED, STATUS_RATE_LIMITED):
                 f["status"] = STATUS_FAILED
                 f["error"] = message[:500]
                 n += 1
@@ -308,7 +310,7 @@ def queued_or_all_files(case_id: str) -> list[str]:
             return []
         pending = [
             f["filename"] for f in case["files"]
-            if f.get("status") in (STATUS_QUEUED, STATUS_FAILED)
+            if f.get("status") in (STATUS_QUEUED, STATUS_FAILED, STATUS_RATE_LIMITED)
         ]
         return pending or [f["filename"] for f in case["files"]]
 

@@ -71,7 +71,9 @@ _DEFAULTS: dict[str, str] = {
     "LLM_RATE_LIMIT_REQUESTS": "25",
     "LLM_RATE_LIMIT_INTERVAL": "60",
     # Hard per-file ceiling (seconds) on add+cognify during a case ingest.
-    "INGEST_FILE_TIMEOUT_S": "180",
+    # MUST exceed cognee's internal ~240s LLM retry floor, or rate-limited
+    # files get cut off mid-backoff and mis-read as hard timeouts.
+    "INGEST_FILE_TIMEOUT_S": "360",
     # Embeddings: local FastEmbed (384-dim MiniLM). Dimensions MUST be explicit,
     # otherwise Cognee defaults to 3072 and silently falls back to OpenAI.
     "EMBEDDING_PROVIDER": "fastembed",
