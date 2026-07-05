@@ -147,9 +147,9 @@ Screenshots are placeholders; drop the captured images into `docs/img/` to popul
 
 ### Demo
 
-▶️ **[Watch the demo on YouTube](https://youtu.be/YOUR_VIDEO_ID)**
+▶️ **[Watch the demo on YouTube](https://youtu.be/andctA1DQ_M?si=d9DBhyp3lwsundC1)**
 
-[![Watch the demo](docs/img/koshurlock.png)](https://youtu.be/YOUR_VIDEO_ID)
+[![Watch the demo](docs/img/koshurlock.png)](https://youtu.be/andctA1DQ_M?si=d9DBhyp3lwsundC1)
 
 ## Documentation
 
