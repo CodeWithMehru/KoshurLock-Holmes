@@ -196,6 +196,15 @@ export function EvidenceUpload({
     onError: (e) => setNotice((e as Error).message),
   });
 
+  const cancel = useMutation({
+    mutationFn: () => api.cancelCase(caseId),
+    onSuccess: () => {
+      filesQ.refetch();
+      onCaseChanged();
+    },
+    onError: (e) => setNotice((e as Error).message),
+  });
+
   const addFiles = useCallback(
     (list: FileList | null) => {
       if (!list || list.length === 0) return;
@@ -280,18 +289,31 @@ export function EvidenceUpload({
 
           <div className="flex items-center justify-between">
             <span className="label-caps">Files</span>
-            <Button
-              onClick={() => ingest.mutate()}
-              disabled={!anyPending || anyProcessing || ingest.isPending}
-              size="sm"
-            >
-              {anyProcessing || ingest.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Play className="h-3.5 w-3.5" />
+            <div className="flex items-center gap-2">
+              {(anyProcessing || files.some((f) => f.status === "queued")) && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => cancel.mutate()}
+                  disabled={cancel.isPending}
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  Cancel
+                </Button>
               )}
-              Ingest evidence
-            </Button>
+              <Button
+                onClick={() => ingest.mutate()}
+                disabled={!anyPending || anyProcessing || ingest.isPending}
+                size="sm"
+              >
+                {anyProcessing || ingest.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5" />
+                )}
+                Ingest evidence
+              </Button>
+            </div>
           </div>
 
           <div className="panel overflow-hidden">

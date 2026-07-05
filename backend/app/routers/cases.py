@@ -5,6 +5,7 @@
     POST /cases/{id}/files      -> upload evidence (multipart)
     GET  /cases/{id}/files      -> per-file ingest status (poll)
     POST /cases/{id}/ingest     -> really ingest queued files through Cognee
+    POST /cases/{id}/cancel     -> stop a running ingest after the current file
     POST /cases/{id}/open       -> make this the active + materialized case
 
 The demo case opens warm from the committed snapshot (zero re-ingest); an upload
@@ -110,6 +111,22 @@ async def ingest_case(case_id: str, background: BackgroundTasks) -> dict:
     return {"status": "started", "case_id": case_id}
 
 
+@router.post("/cases/{case_id}/cancel")
+async def cancel_ingest(case_id: str) -> dict:
+    """Stop a running ingest after the file currently processing. Queued files
+    are marked FAILED ("cancelled by user"); the next ingest retries them.
+    Never touches the engine's mutate lock, so it returns immediately."""
+    case = cases.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"case not found: {case_id}")
+    if case.get("kind") == "demo":
+        raise HTTPException(status_code=400, detail="the demo case is never ingested")
+
+    cognee_engine.request_cancel(case_id)
+    n = cases.fail_queued(case_id, "cancelled by user")
+    return {"status": "cancelling", "case_id": case_id, "cancelled_queued": n}
+
+
 @router.post("/cases/{case_id}/open")
 async def open_case(case_id: str, background: BackgroundTasks) -> dict:
     """Activate a case and materialize it in the graph if it isn't already.
@@ -135,12 +152,30 @@ async def open_case(case_id: str, background: BackgroundTasks) -> dict:
     return {"status": "materializing", "case_id": case_id}
 
 
+async def _post_delete_cleanup(case_id: str) -> None:
+    """Background half of a case delete: prune the deleted case's graph data,
+    then warm-restore the demo - mirroring the old synchronous behavior, minus
+    the multi-second DELETE response."""
+    if not await cognee_engine.prune_case_leftovers():
+        log.info(
+            "post-delete cleanup for %s skipped: another case took the graph", case_id
+        )
+        return
+    if cases.materialized_case_id() != cases.DEMO_ID:
+        return  # a new materialize started during the prune; leave it alone
+    try:
+        await restore.restore_demo()
+        cases.set_materialized(cases.DEMO_ID)
+        cases.set_active(cases.DEMO_ID)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("demo restore after delete failed (%s); run `make demo`.", exc)
+
+
 @router.delete("/cases/{case_id}")
-async def delete_case(case_id: str) -> dict:
-    """Delete an uploaded case: its registry entry, its uploaded files, and (if it
-    was the case materialized in the graph) its graph/DB data. The demo case is
-    protected and cannot be deleted; deleting the live case restores the demo warm
-    so the graph is never left polluted or empty."""
+async def delete_case(case_id: str, background: BackgroundTasks) -> dict:
+    """Delete an uploaded case immediately (registry entry + uploaded files);
+    graph cleanup and the demo warm-restore run in the background so the UI is
+    never stuck behind prune + pg_restore. The demo case is protected."""
     case = cases.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail=f"case not found: {case_id}")
@@ -150,21 +185,17 @@ async def delete_case(case_id: str) -> dict:
         )
 
     was_materialized = cases.materialized_case_id() == case_id
-    # Graph-swap: only the materialized case has any graph/cognee footprint; a
-    # non-materialized upload was already pruned by an earlier swap.
+    # If this case is mid-ingest, stop after the current file so the background
+    # cleanup isn't stuck behind the whole remaining queue.
+    cognee_engine.request_cancel(case_id)
+    cases.delete_case(case_id)  # registry entry + uploaded files gone NOW
+
     if was_materialized:
-        await cognee_engine.prune_all()
+        background.add_task(_post_delete_cleanup, case_id)
 
-    cases.delete_case(case_id)
-
-    restored_demo = False
-    if was_materialized:
-        try:
-            await restore.restore_demo()
-            cases.set_materialized(cases.DEMO_ID)
-            cases.set_active(cases.DEMO_ID)
-            restored_demo = True
-        except Exception as exc:  # noqa: BLE001
-            log.warning("demo restore after delete failed (%s); run `make demo`.", exc)
-
-    return {"status": "deleted", "case_id": case_id, "restored_demo": restored_demo}
+    return {
+        "status": "deleted",
+        "case_id": case_id,
+        "restored_demo": False,
+        "cleanup": "background" if was_materialized else "none",
+    }

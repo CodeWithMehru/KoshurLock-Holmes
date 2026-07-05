@@ -70,6 +70,8 @@ _DEFAULTS: dict[str, str] = {
     "LLM_RATE_LIMIT_ENABLED": "true",
     "LLM_RATE_LIMIT_REQUESTS": "25",
     "LLM_RATE_LIMIT_INTERVAL": "60",
+    # Hard per-file ceiling (seconds) on add+cognify during a case ingest.
+    "INGEST_FILE_TIMEOUT_S": "180",
     # Embeddings: local FastEmbed (384-dim MiniLM). Dimensions MUST be explicit,
     # otherwise Cognee defaults to 3072 and silently falls back to OpenAI.
     "EMBEDDING_PROVIDER": "fastembed",

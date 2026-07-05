@@ -279,6 +279,26 @@ def set_file_status(case_id: str, filename: str, status: str, error: str | None 
         _save()
 
 
+def fail_queued(case_id: str, message: str) -> int:
+    """Flip every QUEUED file of a case to FAILED with ``message``. Returns how
+    many were flipped. Used by cancel: queued work is visibly abandoned, and a
+    later ingest picks FAILED files back up automatically."""
+    with _lock:
+        reg = _load()
+        case = reg["cases"].get(case_id)
+        if not case:
+            return 0
+        n = 0
+        for f in case["files"]:
+            if f.get("status") == STATUS_QUEUED:
+                f["status"] = STATUS_FAILED
+                f["error"] = message[:500]
+                n += 1
+        if n:
+            _save()
+        return n
+
+
 def queued_or_all_files(case_id: str) -> list[str]:
     """Filenames to ingest: queued/failed if any, otherwise every registered file
     (used when re-materializing a case that was pruned by a graph-swap)."""

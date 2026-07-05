@@ -183,6 +183,10 @@ export const api = {
     req<Record<string, unknown>>("/cases/" + encodeURIComponent(id) + "/ingest", {
       method: "POST",
     }),
+  cancelCase: (id: string) =>
+    req<Record<string, unknown>>("/cases/" + encodeURIComponent(id) + "/cancel", {
+      method: "POST",
+    }),
   openCase: (id: string) =>
     req<Record<string, unknown>>("/cases/" + encodeURIComponent(id) + "/open", {
       method: "POST",

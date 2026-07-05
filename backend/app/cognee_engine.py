@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import os
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -46,6 +47,19 @@ from cognee.modules.search.types import SearchType  # noqa: E402
 TEMPORAL_COGNIFY = os.environ.get("TEMPORAL_COGNIFY", "false").strip().lower() in (
     "1", "true", "yes", "on",
 )
+
+log = logging.getLogger("tracepoint.engine")
+
+# Hard per-file ceiling on add+cognify (including retry backoff) so one file
+# stuck behind an exhausted Groq quota cannot hang the whole ingest queue.
+try:
+    INGEST_FILE_TIMEOUT_S = float(os.environ.get("INGEST_FILE_TIMEOUT_S", "180"))
+except ValueError:
+    INGEST_FILE_TIMEOUT_S = 180.0
+
+# Substrings marking a Groq free-tier rate limit; shared by the retry loop and
+# the per-file error messages shown in the upload UI.
+_RATE_LIMIT_MARKERS = ("rate limit", "ratelimit", "429", "too many requests")
 
 
 # --------------------------------------------------------------------------- #
@@ -95,6 +109,16 @@ _llm_semaphore = asyncio.Semaphore(1)  # throttle concurrent Groq-backed searche
 # Minimal in-memory state so the API can reflect what's loaded this session.
 _STATE: dict[str, Any] = {"purged": set()}
 
+# Case ids whose in-flight ingest should stop after the current file. Set by
+# the cancel endpoint, consumed by materialize_case. Single event loop, so a
+# plain set is safe.
+_cancel_requested: set[str] = set()
+
+
+def request_cancel(case_id: str) -> None:
+    """Ask a running materialize_case(case_id) to stop after the current file."""
+    _cancel_requested.add(case_id)
+
 
 # --------------------------------------------------------------------------- #
 # Low-level helpers (signature shims, retry, result parsing)
@@ -123,7 +147,7 @@ async def _with_retry(make_coro: Callable[[], Any], tries: int = 5, base: float 
             last = exc
             msg = str(exc).lower()
             ename = type(exc).__name__.lower()
-            if any(k in msg for k in ("rate limit", "ratelimit", "429", "too many requests")):
+            if any(k in msg for k in _RATE_LIMIT_MARKERS):
                 await asyncio.sleep(base * (2 ** attempt))
                 continue
             if (
@@ -291,15 +315,26 @@ async def materialize_case(case_id: str) -> dict:
     if not case or case.get("kind") == "demo":
         raise RuntimeError(f"not an upload case: {case_id!r}")
 
+    # A stale cancel flag from an earlier run must not kill this fresh run.
+    _cancel_requested.discard(case_id)
+
     dataset = case["dataset"]
     filenames = cases.queued_or_all_files(case_id)
     if not filenames:
         raise RuntimeError("no files to ingest for this case")
 
     async with _mutate_lock:
-        # Fresh slate: this case becomes the only one materialized in the graph.
-        await _prune_all_async()
-        _STATE["purged"] = set()
+        if case_id in _cancel_requested:
+            # Cancelled while waiting for the lock: nothing pruned or swapped yet.
+            _cancel_requested.discard(case_id)
+            return {"status": "cancelled", "case_id": case_id, "ingested": []}
+
+        if cases.materialized_case_id() != case_id:
+            # Fresh slate: this case becomes the only one materialized in the
+            # graph. A retry on the already-materialized case is incremental
+            # instead, so files already in_graph keep their graph data.
+            await _prune_all_async()
+            _STATE["purged"] = set()
         cases.set_materialized(case_id)
         cases.set_active(case_id)
 
@@ -311,23 +346,45 @@ async def materialize_case(case_id: str) -> dict:
         # while cross-file entity resolution still happens in the shared dataset.
         added: list[str] = []
         for name in filenames:
+            if case_id in _cancel_requested:
+                log.info(
+                    "ingest of case %s cancelled; %s and later files skipped",
+                    case_id, name,
+                )
+                break
             path = cases.evidence_path(case, name)
             cases.set_file_status(case_id, name, cases.STATUS_PROCESSING)
-            try:
-                doc = ingest.read_evidence_file(path)
+
+            async def _ingest_one(p: Path = path) -> None:
+                doc = ingest.read_evidence_file(p)
                 await _with_retry(
                     lambda d=doc, ds=dataset: cognee.add(
                         d.text, dataset_name=ds, node_set=[d.filename]
                     )
                 )
                 await _with_retry(lambda ds=dataset: _cognify([ds]))
+
+            try:
+                # Hard ceiling per file so an exhausted quota (retry backoff can
+                # burn minutes) fails THIS file and the queue moves on.
+                await asyncio.wait_for(_ingest_one(), timeout=INGEST_FILE_TIMEOUT_S)
                 cases.set_file_status(case_id, name, cases.STATUS_IN_GRAPH)
                 added.append(name)
+            except TimeoutError:
+                cases.set_file_status(
+                    case_id, name, cases.STATUS_FAILED,
+                    f"ingest timed out after {int(INGEST_FILE_TIMEOUT_S)}s "
+                    "(LLM rate limit or slow provider) - run ingest again to retry",
+                )
             except Exception as exc:  # noqa: BLE001
-                cases.set_file_status(case_id, name, cases.STATUS_FAILED, str(exc))
+                msg = str(exc)
+                if any(k in msg.lower() for k in _RATE_LIMIT_MARKERS):
+                    msg = f"LLM rate limit - retry later ({msg[:100]})"
+                cases.set_file_status(case_id, name, cases.STATUS_FAILED, msg)
 
         counts = await _graph_counts()
 
+    _cancel_requested.discard(case_id)
     return {"status": "ok", "case_id": case_id, "dataset": dataset,
             "ingested": added, **counts}
 
@@ -589,6 +646,20 @@ async def prune_all() -> dict:
         await _prune_all_async()
     _STATE["purged"] = set()
     return {"status": "pruned"}
+
+
+async def prune_case_leftovers() -> bool:
+    """Prune the graph after a case delete - unless another case has been
+    materialized meanwhile (its own materialize already swapped the graph, so
+    pruning now would destroy fresh work). Returns True if the prune ran."""
+    from . import cases
+
+    async with _mutate_lock:
+        if cases.materialized_case_id() != cases.DEMO_ID:
+            return False
+        await _prune_all_async()
+    _STATE["purged"] = set()
+    return True
 
 
 async def _prune_all_async():

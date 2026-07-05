@@ -1,3 +1,8 @@
+# Rendered at container start by the stock nginx image's envsubst entrypoint
+# (/docker-entrypoint.d/20-envsubst-on-templates.sh): /etc/nginx/templates/
+# default.conf.template -> /etc/nginx/conf.d/default.conf.
+# BACKEND_ORIGIN must have NO trailing slash (e.g. http://backend:8000) - the
+# literal "/" after it below is what strips the /api prefix.
 server {
     listen 80;
     server_name _;
@@ -12,7 +17,7 @@ server {
     # Reverse-proxy the API so the browser stays same-origin (no CORS needed).
     # Trailing slash on proxy_pass strips the /api prefix: /api/status -> /status.
     location /api/ {
-        proxy_pass http://koshurlock-holmes.railway.internal:8000/;
+        proxy_pass ${BACKEND_ORIGIN}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
