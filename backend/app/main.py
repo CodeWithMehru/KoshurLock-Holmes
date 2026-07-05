@@ -28,15 +28,12 @@ log = logging.getLogger("tracepoint")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    status = await cognee_engine.warm_status()
-    if status.get("ingested"):
-        log.info("Warm start: graph populated (nodes=%s edges=%s)",
-                 status.get("nodes"), status.get("edges"))
-    elif restore.snapshot_available():
-        # Cold start with a committed snapshot present: bring the demo up warm so
-        # `docker compose up --build` is ready with zero re-ingest. Best-effort;
-        # `make demo` / `make restore` remain the guaranteed fallback.
-        log.info("Cold start: graph empty. Restoring demo snapshot in-app ...")
+    # Always warm-restore the demo snapshot on startup when one is present, so a
+    # restart / redeploy (which resets case state even when Postgres still holds
+    # data) always comes back with the demo materialized. Best-effort; the app
+    # still starts if restore fails.
+    if restore.snapshot_available():
+        log.info("Startup: restoring demo snapshot in-app ...")
         try:
             result = await restore.restore_demo()
             log.info("Demo snapshot restored (nodes=%s edges=%s)",
@@ -44,7 +41,12 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             log.warning("in-app snapshot restore failed (%s). Run `make demo`.", exc)
     else:
-        log.info("Cold start: graph empty, no snapshot. Run POST /ingest or `make seed`.")
+        status = await cognee_engine.warm_status()
+        if status.get("ingested"):
+            log.info("Warm start: graph populated (nodes=%s edges=%s)",
+                     status.get("nodes"), status.get("edges"))
+        else:
+            log.info("Cold start: graph empty, no snapshot. Run POST /ingest or `make seed`.")
     yield
 
 
