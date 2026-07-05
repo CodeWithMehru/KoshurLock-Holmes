@@ -44,7 +44,7 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-tran
 COPY app ./app
 COPY data ./data
 COPY scripts ./scripts
-COPY scripts/snapshots /snapshots
+COPY snapshots /snapshots
 EXPOSE 8000
 
 # Single worker so the in-process asyncio locks/semaphore are authoritative.
